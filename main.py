@@ -3,43 +3,44 @@ import re
 import random
 import asyncio
 
-from flask import Flask
 from telethon import TelegramClient, events
+from flask import Flask
+from threading import Thread
 
-# ======================================================
+# =====================================================
 # CONFIG
-# ======================================================
+# =====================================================
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-GROUP_A_ID = int(os.getenv("GROUP_A_ID"))
-GROUP_B_ID = int(os.getenv("GROUP_B_ID"))
+GROUP_A_ID = int(os.environ["GROUP_A_ID"])
+GROUP_B_ID = int(os.environ["GROUP_B_ID"])
 
-# ======================================================
-# FLASK APP
-# ======================================================
+# =====================================================
+# FLASK
+# =====================================================
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Anonymous Bridge Running"
+    return "Bridge Running"
 
-# ======================================================
+# =====================================================
 # TELEGRAM CLIENT
-# ======================================================
+# =====================================================
 
 client = TelegramClient(
-    "bot_session",
+    "bridge_bot",
     API_ID,
     API_HASH
 )
 
-# ======================================================
-# USER CACHE
-# ======================================================
+# =====================================================
+# RANDOM USER IDs
+# =====================================================
 
 users = {}
 
@@ -50,11 +51,11 @@ def anon(uid):
 
     return users[uid]
 
-# ======================================================
+# =====================================================
 # SANITIZE
-# ======================================================
+# =====================================================
 
-def clean_text(text):
+def clean(text):
 
     if not text:
         return ""
@@ -63,7 +64,7 @@ def clean_text(text):
 
     text = re.sub(
         r'(https?://)?t\.me/\S+',
-        '[telegram link removed]',
+        '[link removed]',
         text
     )
 
@@ -75,36 +76,39 @@ def clean_text(text):
 
     return text
 
-# ======================================================
-# RELAY
-# ======================================================
+# =====================================================
+# RELAY FUNCTION
+# =====================================================
 
 async def relay(event, target):
 
     try:
 
-        # Block forwarded messages
-        if event.message.fwd_from:
+        print("MESSAGE RECEIVED")
+        print("CHAT:", event.chat_id)
+
+        # ignore forwarded
+        if event.fwd_from:
             return
 
         sender = await event.get_sender()
 
         name = anon(sender.id)
 
-        text = clean_text(event.raw_text or "")
+        text = clean(event.raw_text or "")
 
         final = f"{name}:\n\n{text}"
 
-        # MEDIA
-        if event.message.media:
+        # media
+        if event.media:
 
             await client.send_file(
                 target,
-                file=event.message.media,
+                file=event.media,
                 caption=final
             )
 
-        # TEXT
+        # text
         else:
 
             await client.send_message(
@@ -112,57 +116,70 @@ async def relay(event, target):
                 final
             )
 
+        print("FORWARDED SUCCESSFULLY")
+
     except Exception as e:
 
-        print("RELAY ERROR:", e)
+        print("ERROR:", e)
 
-# ======================================================
-# GROUP A -> GROUP B
-# ======================================================
+# =====================================================
+# ALL MESSAGE DETECTOR
+# =====================================================
 
-@client.on(events.NewMessage(chats=GROUP_A_ID))
-async def group_a(event):
+@client.on(events.NewMessage)
+async def handler(event):
 
-    if event.out:
-        return
+    try:
 
-    await relay(event, GROUP_B_ID)
+        chat = event.chat_id
 
-# ======================================================
-# GROUP B -> GROUP A
-# ======================================================
+        # GROUP A -> B
+        if chat == GROUP_A_ID:
 
-@client.on(events.NewMessage(chats=GROUP_B_ID))
-async def group_b(event):
+            await relay(event, GROUP_B_ID)
 
-    if event.out:
-        return
+        # GROUP B -> A
+        elif chat == GROUP_B_ID:
 
-    await relay(event, GROUP_A_ID)
+            await relay(event, GROUP_A_ID)
 
-# ======================================================
-# MAIN
-# ======================================================
+    except Exception as e:
 
-async def main():
+        print("HANDLER ERROR:", e)
+
+# =====================================================
+# TELEGRAM START
+# =====================================================
+
+async def telegram_main():
 
     await client.start(bot_token=BOT_TOKEN)
 
     print("================================")
-    print(" ANONYMOUS BRIDGE IS RUNNING ")
+    print(" BRIDGE BOT RUNNING ")
     print("================================")
 
-    flask_task = asyncio.to_thread(
-        app.run,
+    await client.run_until_disconnected()
+
+# =====================================================
+# RUN FLASK
+# =====================================================
+
+def run_flask():
+
+    app.run(
         host="0.0.0.0",
         port=int(os.environ.get("PORT", 10000))
     )
 
-    telegram_task = client.run_until_disconnected()
+# =====================================================
+# MAIN
+# =====================================================
 
-    await asyncio.gather(
-        flask_task,
-        telegram_task
-    )
+if __name__ == "__main__":
 
-asyncio.run(main())
+    flask_thread = Thread(target=run_flask)
+
+    flask_thread.start()
+
+    asyncio.run(telegram_main())
