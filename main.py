@@ -1,31 +1,14 @@
 # =========================================================
 # TELEGRAM ANONYMOUS GROUP BRIDGE
-# FULL RENDER-READY VERSION
-# =========================================================
-#
-# FEATURES:
-# - Group A <-> Group B anonymous bridge
-# - Removes usernames
-# - Removes Telegram links
-# - Removes phone numbers
-# - Removes emails
-# - Blocks forwarded messages
-# - Supports:
-#     Text
-#     Photos
-#     Videos
-#     Documents
-#     Stickers
-#     Voice messages
-# - Random anonymous IDs
-# - Render deploy ready
-#
+# RENDER WEB SERVICE VERSION
 # =========================================================
 
 import os
 import re
 import random
+from threading import Thread
 
+from flask import Flask
 from telethon import TelegramClient, events
 
 # =========================================================
@@ -40,7 +23,7 @@ GROUP_A_ID = int(os.getenv("GROUP_A_ID"))
 GROUP_B_ID = int(os.getenv("GROUP_B_ID"))
 
 # =========================================================
-# START CLIENT
+# TELEGRAM CLIENT
 # =========================================================
 
 client = TelegramClient(
@@ -50,7 +33,17 @@ client = TelegramClient(
 ).start(bot_token=BOT_TOKEN)
 
 # =========================================================
-# USER CACHE
+# FLASK APP
+# =========================================================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Anonymous Bridge Bot Running"
+
+# =========================================================
+# RANDOM ANON USER IDS
 # =========================================================
 
 anonymous_users = {}
@@ -120,9 +113,9 @@ async def relay_message(event, target_group):
         if event.message.fwd_from:
             return
 
-        original_text = event.raw_text or ""
+        text = event.raw_text or ""
 
-        clean_text = sanitize_text(original_text)
+        clean_text = sanitize_text(text)
 
         final_caption = (
             f"{anon_name}:\n\n"
@@ -130,7 +123,7 @@ async def relay_message(event, target_group):
         )
 
         # =================================================
-        # MEDIA
+        # MEDIA MESSAGES
         # =================================================
 
         if event.message.media:
@@ -142,7 +135,7 @@ async def relay_message(event, target_group):
             )
 
         # =================================================
-        # TEXT
+        # TEXT MESSAGES
         # =================================================
 
         else:
@@ -181,11 +174,30 @@ async def group_b_handler(event):
     await relay_message(event, GROUP_A_ID)
 
 # =========================================================
-# START
+# START TELEGRAM BOT
 # =========================================================
 
-print("================================")
-print(" ANONYMOUS BRIDGE IS RUNNING ")
-print("================================")
+def run_telegram():
 
-client.run_until_disconnected()
+    print("================================")
+    print(" ANONYMOUS BRIDGE IS RUNNING ")
+    print("================================")
+
+    client.run_until_disconnected()
+
+# =========================================================
+# MAIN
+# =========================================================
+
+if __name__ == "__main__":
+
+    telegram_thread = Thread(target=run_telegram)
+
+    telegram_thread.start()
+
+    PORT = int(os.environ.get("PORT", 10000))
+
+    app.run(
+        host="0.0.0.0",
+        port=PORT
+    )
