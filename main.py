@@ -1,19 +1,14 @@
-# =========================================================
-# TELEGRAM ANONYMOUS GROUP BRIDGE
-# RENDER WEB SERVICE VERSION
-# =========================================================
-
 import os
 import re
 import random
-from threading import Thread
+import asyncio
 
 from flask import Flask
 from telethon import TelegramClient, events
 
-# =========================================================
-# ENV VARIABLES
-# =========================================================
+# ======================================================
+# CONFIG
+# ======================================================
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
@@ -22,182 +17,152 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_A_ID = int(os.getenv("GROUP_A_ID"))
 GROUP_B_ID = int(os.getenv("GROUP_B_ID"))
 
-# =========================================================
-# TELEGRAM CLIENT
-# =========================================================
-
-client = TelegramClient(
-    "bridge_session",
-    API_ID,
-    API_HASH
-).start(bot_token=BOT_TOKEN)
-
-# =========================================================
+# ======================================================
 # FLASK APP
-# =========================================================
+# ======================================================
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Anonymous Bridge Bot Running"
+    return "Anonymous Bridge Running"
 
-# =========================================================
-# RANDOM ANON USER IDS
-# =========================================================
+# ======================================================
+# TELEGRAM CLIENT
+# ======================================================
 
-anonymous_users = {}
+client = TelegramClient(
+    "bot_session",
+    API_ID,
+    API_HASH
+)
 
-def get_anon_name(user_id):
+# ======================================================
+# USER CACHE
+# ======================================================
 
-    if user_id not in anonymous_users:
-        anonymous_users[user_id] = (
-            f"User-{random.randint(1000,9999)}"
-        )
+users = {}
 
-    return anonymous_users[user_id]
+def anon(uid):
 
-# =========================================================
-# SANITIZE TEXT
-# =========================================================
+    if uid not in users:
+        users[uid] = f"User-{random.randint(1000,9999)}"
 
-def sanitize_text(text):
+    return users[uid]
+
+# ======================================================
+# SANITIZE
+# ======================================================
+
+def clean_text(text):
 
     if not text:
         return ""
 
-    # Remove usernames
-    text = re.sub(
-        r'@\w+',
-        '[username removed]',
-        text
-    )
+    text = re.sub(r'@\w+', '[username removed]', text)
 
-    # Remove Telegram links
     text = re.sub(
-        r'(https?://)?(www\.)?(t\.me|telegram\.me)/\S+',
+        r'(https?://)?t\.me/\S+',
         '[telegram link removed]',
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # Remove phone numbers
-    text = re.sub(
-        r'(\+?\d[\d\-\s]{7,}\d)',
-        '[number removed]',
         text
     )
 
-    # Remove emails
     text = re.sub(
-        r'[\w\.-]+@[\w\.-]+\.\w+',
-        '[email removed]',
+        r'\+?\d[\d\s\-]{7,}\d',
+        '[number removed]',
         text
     )
 
     return text
 
-# =========================================================
-# RELAY FUNCTION
-# =========================================================
+# ======================================================
+# RELAY
+# ======================================================
 
-async def relay_message(event, target_group):
+async def relay(event, target):
 
     try:
-
-        sender = await event.get_sender()
-
-        anon_name = get_anon_name(sender.id)
 
         # Block forwarded messages
         if event.message.fwd_from:
             return
 
-        text = event.raw_text or ""
+        sender = await event.get_sender()
 
-        clean_text = sanitize_text(text)
+        name = anon(sender.id)
 
-        final_caption = (
-            f"{anon_name}:\n\n"
-            f"{clean_text}"
-        )
+        text = clean_text(event.raw_text or "")
 
-        # =================================================
-        # MEDIA MESSAGES
-        # =================================================
+        final = f"{name}:\n\n{text}"
 
+        # MEDIA
         if event.message.media:
 
             await client.send_file(
-                target_group,
+                target,
                 file=event.message.media,
-                caption=final_caption
+                caption=final
             )
 
-        # =================================================
-        # TEXT MESSAGES
-        # =================================================
-
+        # TEXT
         else:
 
             await client.send_message(
-                target_group,
-                final_caption
+                target,
+                final
             )
 
     except Exception as e:
 
-        print("Relay Error:", e)
+        print("RELAY ERROR:", e)
 
-# =========================================================
+# ======================================================
 # GROUP A -> GROUP B
-# =========================================================
+# ======================================================
 
 @client.on(events.NewMessage(chats=GROUP_A_ID))
-async def group_a_handler(event):
+async def group_a(event):
 
     if event.out:
         return
 
-    await relay_message(event, GROUP_B_ID)
+    await relay(event, GROUP_B_ID)
 
-# =========================================================
+# ======================================================
 # GROUP B -> GROUP A
-# =========================================================
+# ======================================================
 
 @client.on(events.NewMessage(chats=GROUP_B_ID))
-async def group_b_handler(event):
+async def group_b(event):
 
     if event.out:
         return
 
-    await relay_message(event, GROUP_A_ID)
+    await relay(event, GROUP_A_ID)
 
-# =========================================================
-# START TELEGRAM BOT
-# =========================================================
+# ======================================================
+# MAIN
+# ======================================================
 
-def run_telegram():
+async def main():
+
+    await client.start(bot_token=BOT_TOKEN)
 
     print("================================")
     print(" ANONYMOUS BRIDGE IS RUNNING ")
     print("================================")
 
-    client.run_until_disconnected()
-
-# =========================================================
-# MAIN
-# =========================================================
-
-if __name__ == "__main__":
-
-    telegram_thread = Thread(target=run_telegram)
-
-    telegram_thread.start()
-
-    PORT = int(os.environ.get("PORT", 10000))
-
-    app.run(
+    flask_task = asyncio.to_thread(
+        app.run,
         host="0.0.0.0",
-        port=PORT
+        port=int(os.environ.get("PORT", 10000))
     )
+
+    telegram_task = client.run_until_disconnected()
+
+    await asyncio.gather(
+        flask_task,
+        telegram_task
+    )
+
+asyncio.run(main())
